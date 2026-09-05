@@ -50,7 +50,7 @@ public class SessionCookieWriter {
         if (claims == null) {
             return List.of();
         }
-        String username = claims.username() == null ? "" : claims.username();
+        String username = cookieSafe(claims.username());
         return List.of(
                 build(origin, USER_NAME_COOKIE, username, REFRESH_MAX_AGE_SECONDS, false, ROOT_PATH),
                 build(origin, ADMIN_COOKIE, Boolean.toString(claims.isAdmin()), REFRESH_MAX_AGE_SECONDS, false, ROOT_PATH));
@@ -74,6 +74,28 @@ public class SessionCookieWriter {
 
     public Cookie clearedStateCookie(PublicOrigin origin) {
         return cleared(origin, STATE_COOKIE, true, STATE_PATH, null);
+    }
+
+    static String cookieSafe(String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (isCookieOctet(character)) {
+                builder.append(character);
+            }
+        }
+        return builder.toString();
+    }
+
+    private static boolean isCookieOctet(char character) {
+        return character == 0x21
+                || (character >= 0x23 && character <= 0x2B)
+                || (character >= 0x2D && character <= 0x3A)
+                || (character >= 0x3C && character <= 0x5B)
+                || (character >= 0x5D && character <= 0x7E);
     }
 
     private Cookie build(PublicOrigin origin, String name, String value, long maxAge, boolean httpOnly, String path) {

@@ -79,6 +79,16 @@ class SessionClaimsReaderTest {
     }
 
     @Test
+    void testSigningKeyHealthIsReportedSeparatelyFromTokenValidity() {
+        assertTrue(reader.isSigningKeyUsable());
+        assertFalse(new SessionClaimsReader(property -> null).isSigningKeyUsable());
+        assertFalse(new SessionClaimsReader(property -> "tooshort").isSigningKeyUsable());
+        assertFalse(new SessionClaimsReader(property -> {
+            throw new IllegalStateException("no secrets.properties");
+        }).isSigningKeyUsable());
+    }
+
+    @Test
     void testTokenFromAnotherIssuerIsRejected() {
         String token = TestTokens.tokenWithIssuer("tester", Roles.USER, "RE", null, 900,
                 TestTokens.SIGNING_KEY, "https://evil.example.org");

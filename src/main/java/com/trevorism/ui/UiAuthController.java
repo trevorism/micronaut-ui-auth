@@ -16,6 +16,7 @@ import jakarta.inject.Inject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -36,7 +37,8 @@ public class UiAuthController {
     private static final String DEFAULT_NEXT = "/";
     private static final String PROTOCOL_RELATIVE_PREFIX = "//";
     private static final String BACKSLASH_PREFIX = "/\\";
-    private static final Pattern SAFE_NEXT = Pattern.compile("/[A-Za-z0-9\\-._~/?#\\[\\]@!$&'()*+=:%]*");
+    private static final Pattern SAFE_NEXT = Pattern.compile("/[\\x21-\\x5B\\x5D-\\x7E]*");
+    private static final int MAX_NEXT_LENGTH = 512;
     private static final int STATE_BYTES = 32;
 
     private final UiAuthConfiguration configuration;
@@ -65,7 +67,7 @@ public class UiAuthController {
         String state = generateState();
         String safeNext = safeNext(next);
         return found(authorizeUri(origin, state))
-                .cookie(cookieWriter.stateCookie(origin, state + ":" + safeNext));
+                .cookie(cookieWriter.stateCookie(origin, encodeStateCookie(state, safeNext)));
     }
 
     @Get("/callback")
@@ -89,7 +91,7 @@ public class UiAuthController {
         if (claims == null) {
             return abandonCallback(origin, "the handed off access token could not be read");
         }
-        String next = parts.length > 1 ? safeNext(parts[1]) : DEFAULT_NEXT;
+        String next = decodeNextFromStateCookie(stateCookie);
         MutableHttpResponse<Object> response = found(next);
         applyCookies(response, cookieWriter.sessionCookies(origin, tokens.getAccessToken(), tokens.getRefreshToken(), claims));
         return response.cookie(cookieWriter.clearedStateCookie(origin));
@@ -111,7 +113,9 @@ public class UiAuthController {
         SessionClaims refreshed = claimsReader.read(accessToken);
         if (refreshed == null) {
             MutableHttpResponse<Object> cleared = HttpResponse.ok(unauthenticatedBody());
-            applyCookies(cleared, cookieWriter.clearedCookies(origin));
+            if (claimsReader.isSigningKeyUsable()) {
+                applyCookies(cleared, cookieWriter.clearedCookies(origin));
+            }
             return cleared;
         }
         MutableHttpResponse<Object> response = HttpResponse.ok(authenticatedBody(refreshed));
@@ -129,6 +133,9 @@ public class UiAuthController {
         String accessToken = authProviderClient.redeemRefreshToken(refreshToken);
         SessionClaims claims = claimsReader.read(accessToken);
         if (claims == null) {
+            if (!claimsReader.isSigningKeyUsable()) {
+                return HttpResponse.serverError();
+            }
             return clearedUnauthorized(origin);
         }
         MutableHttpResponse<Object> response = HttpResponse.ok(authenticatedBody(claims));
@@ -154,7 +161,7 @@ public class UiAuthController {
 
     private HttpResponse<?> abandonCallback(PublicOrigin origin, String reason) {
         log.warn("Abandoning auth callback, {}", reason);
-        return found(DEFAULT_NEXT).cookie(cookieWriter.clearedStateCookie(origin));
+        return found(DEFAULT_NEXT + "?authError=1").cookie(cookieWriter.clearedStateCookie(origin));
     }
 
     private static void applyCookies(MutableHttpResponse<Object> response, List<Cookie> cookies) {
@@ -205,10 +212,26 @@ public class UiAuthController {
         if (next.startsWith(PROTOCOL_RELATIVE_PREFIX) || next.startsWith(BACKSLASH_PREFIX)) {
             return DEFAULT_NEXT;
         }
-        if (!SAFE_NEXT.matcher(next).matches()) {
+        if (next.length() > MAX_NEXT_LENGTH || !SAFE_NEXT.matcher(next).matches()) {
             return DEFAULT_NEXT;
         }
         return next;
+    }
+
+    static String encodeStateCookie(String state, String next) {
+        return state + ":" + URLEncoder.encode(next, StandardCharsets.UTF_8);
+    }
+
+    static String decodeNextFromStateCookie(String stateCookie) {
+        int separator = stateCookie.indexOf(':');
+        if (separator < 0 || separator == stateCookie.length() - 1) {
+            return DEFAULT_NEXT;
+        }
+        try {
+            return safeNext(URLDecoder.decode(stateCookie.substring(separator + 1), StandardCharsets.UTF_8));
+        } catch (IllegalArgumentException e) {
+            return DEFAULT_NEXT;
+        }
     }
 
     private String generateState() {

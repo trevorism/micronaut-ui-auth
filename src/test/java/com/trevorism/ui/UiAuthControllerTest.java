@@ -55,7 +55,7 @@ class UiAuthControllerTest {
 
     private static void assertAbandoned(HttpResponse<?> response) {
         assertEquals(HttpStatus.FOUND, response.status());
-        assertEquals("/", location(response));
+        assertEquals("/?authError=1", location(response));
         Cookie state = cookie(response, SessionCookieWriter.STATE_COOKIE);
         assertNotNull(state);
         assertEquals(0L, state.getMaxAge());
@@ -81,7 +81,7 @@ class UiAuthControllerTest {
         assertNotNull(state);
         assertTrue(state.isHttpOnly());
         assertEquals(SessionCookieWriter.STATE_PATH, state.getPath());
-        assertTrue(state.getValue().endsWith(":/report"));
+        assertTrue(state.getValue().endsWith(":%2Freport"));
         assertTrue(target.contains("state=" + state.getValue().split(":", 2)[0]));
     }
 
@@ -114,25 +114,50 @@ class UiAuthControllerTest {
     }
 
     @Test
-    void testNextWithCharactersIllegalInACookieOrUriFallsBackToRoot() {
-        assertEquals("/", UiAuthController.safeNext("/a{b}"));
-        assertEquals("/", UiAuthController.safeNext("/a|b"));
+    void testNextKeepsPathsVueRouterActuallyProduces() {
+        assertEquals("/report?ids=1,2,3", UiAuthController.safeNext("/report?ids=1,2,3"));
+        assertEquals("/report?sort=name,asc", UiAuthController.safeNext("/report?sort=name,asc"));
+        assertEquals("/search?filter=a;b", UiAuthController.safeNext("/search?filter=a;b"));
+        assertEquals("/a|b", UiAuthController.safeNext("/a|b"));
+        assertEquals("/x?filter={a}", UiAuthController.safeNext("/x?filter={a}"));
+        assertEquals("/report/2024%20q1?tab=1&sort=desc#top",
+                UiAuthController.safeNext("/report/2024%20q1?tab=1&sort=desc#top"));
+    }
+
+    @Test
+    void testNextWithCharactersIllegalInALocationHeaderFallsBackToRoot() {
         assertEquals("/", UiAuthController.safeNext("/my report"));
-        assertEquals("/", UiAuthController.safeNext("/a,b"));
-        assertEquals("/", UiAuthController.safeNext("/a;b"));
-        assertEquals("/", UiAuthController.safeNext("/a\"b"));
+        assertEquals("/", UiAuthController.safeNext("/a" + ((char) 0x5C) + "b"));
+        assertEquals("/", UiAuthController.safeNext("/a" + ((char) 0x08) + "b"));
         assertEquals("/", UiAuthController.safeNext("/rapport/é"));
         assertEquals("/", UiAuthController.safeNext("/a\rb"));
         assertEquals("/", UiAuthController.safeNext("/a\nb"));
-        assertEquals("/report/2024%20q1?tab=1&sort=desc#top",
-                UiAuthController.safeNext("/report/2024%20q1?tab=1&sort=desc#top"));
+        assertEquals("/", UiAuthController.safeNext("/" + "a".repeat(600)));
+    }
+
+    @Test
+    void testNextSurvivesTheStateCookieRoundTrip() {
+        String next = "/report?ids=1,2,3&filter=a;b#top";
+
+        String cookieValue = UiAuthController.encodeStateCookie("abc", next);
+
+        assertFalse(cookieValue.contains(","), cookieValue);
+        assertFalse(cookieValue.contains(";"), cookieValue);
+        assertEquals(next, UiAuthController.decodeNextFromStateCookie(cookieValue));
+    }
+
+    @Test
+    void testStateCookieWithoutANextFallsBackToRoot() {
+        assertEquals("/", UiAuthController.decodeNextFromStateCookie("abc"));
+        assertEquals("/", UiAuthController.decodeNextFromStateCookie("abc:"));
+        assertEquals("/", UiAuthController.decodeNextFromStateCookie("abc:%2F%2Fevil.example.org"));
     }
 
     @Test
     void testLoginRejectsOpenRedirectInStateCookie() {
         HttpResponse<?> response = controller("{}").login("//evil.example.org", request("/api/auth/login"));
 
-        assertTrue(cookie(response, SessionCookieWriter.STATE_COOKIE).getValue().endsWith(":/"));
+        assertTrue(cookie(response, SessionCookieWriter.STATE_COOKIE).getValue().endsWith(":%2F"));
     }
 
     @Test
@@ -140,7 +165,7 @@ class UiAuthControllerTest {
         String accessToken = TestTokens.token("tester", Roles.USER, 900);
         UiAuthController controller = controller("{\"accessToken\":\"" + accessToken + "\",\"refreshToken\":\"refresh.jwt\"}");
 
-        HttpResponse<?> response = controller.callback("1000.secret", "abc", "abc:/report", request("/api/auth/callback"));
+        HttpResponse<?> response = controller.callback("1000.secret", "abc", "abc:%2Freport", request("/api/auth/callback"));
 
         assertEquals(HttpStatus.FOUND, response.status());
         assertEquals("/report", location(response));
@@ -167,19 +192,19 @@ class UiAuthControllerTest {
 
     @Test
     void testCallbackRejectsMissingCode() {
-        assertAbandoned(controller("{}").callback(null, "abc", "abc:/report", request("/api/auth/callback")));
+        assertAbandoned(controller("{}").callback(null, "abc", "abc:%2Freport", request("/api/auth/callback")));
     }
 
     @Test
     void testCallbackRejectsFailedRedeem() {
         assertAbandoned(controller(StubHttpClient.failing(400))
-                .callback("1000.secret", "abc", "abc:/report", request("/api/auth/callback")));
+                .callback("1000.secret", "abc", "abc:%2Freport", request("/api/auth/callback")));
     }
 
     @Test
     void testCallbackRejectsUnreadableAccessToken() {
         assertAbandoned(controller("{\"accessToken\":\"not.a.jwt\"}")
-                .callback("1000.secret", "abc", "abc:/report", request("/api/auth/callback")));
+                .callback("1000.secret", "abc", "abc:%2Freport", request("/api/auth/callback")));
     }
 
     @Test
@@ -196,7 +221,7 @@ class UiAuthControllerTest {
     @Test
     void testReplayedCallbackDoesNotSignTheUserOut() {
         HttpResponse<?> response = controller(StubHttpClient.failing(400))
-                .callback("1000.spent", "abc", "abc:/report", request("/api/auth/callback"));
+                .callback("1000.spent", "abc", "abc:%2Freport", request("/api/auth/callback"));
 
         assertAbandoned(response);
         assertNull(cookie(response, SessionCookieWriter.SESSION_COOKIE));
@@ -215,7 +240,7 @@ class UiAuthControllerTest {
         String accessToken = TestTokens.token("tester", Roles.USER, 900);
         UiAuthController controller = controller("{\"accessToken\":\"" + accessToken + "\"}");
 
-        HttpResponse<?> response = controller.callback("1000.secret", "abc", "abc://evil.example.org", request("/api/auth/callback"));
+        HttpResponse<?> response = controller.callback("1000.secret", "abc", "abc:%2F%2Fevil.example.org", request("/api/auth/callback"));
 
         assertEquals("/", location(response));
     }

@@ -152,6 +152,23 @@ class SessionCookieWriterTest {
     }
 
     @Test
+    void testUsernameWithCharactersIllegalInACookieIsSanitised() {
+        SessionClaims awkward = new SessionClaims("Smith, John", Roles.USER, "CRE", null, Instant.now().plusSeconds(900));
+
+        List<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", null, awkward);
+
+        String username = find(cookies, SessionCookieWriter.USER_NAME_COOKIE, "trevorism.com").getValue();
+        assertEquals("SmithJohn", username);
+    }
+
+    @Test
+    void testOrdinaryUsernamesAreUntouched() {
+        assertEquals("tester@trevorism.com", SessionCookieWriter.cookieSafe("tester@trevorism.com"));
+        assertEquals("tester", SessionCookieWriter.cookieSafe("tester"));
+        assertEquals("", SessionCookieWriter.cookieSafe(null));
+    }
+
+    @Test
     void testAccessTokenCookiesLeaveCompatibilityCookiesAlone() {
         List<Cookie> cookies = writer().accessTokenCookies(PLATFORM, "access");
 
