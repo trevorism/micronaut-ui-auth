@@ -33,6 +33,10 @@ public class SessionClaimsReader {
         this.propertiesProvider = propertiesProvider;
     }
 
+    public boolean isSigningKeyUsable() {
+        return signingKey() != null;
+    }
+
     public SessionClaims read(String token) {
         if (token == null || token.isBlank()) {
             return null;
