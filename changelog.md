@@ -1,3 +1,9 @@
+## 1.0.1
+
+Stop a username containing a space or a comma from breaking the callback, keep
+deep links that vue-router produces, and stop an unusable signing key from
+deleting refresh tokens.
+
 ## 1.0.0
 
 Add the browser session endpoints for Trevorism UI apps: login handoff, callback,
