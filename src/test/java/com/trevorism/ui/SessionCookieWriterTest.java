@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -32,7 +31,7 @@ class SessionCookieWriterTest {
         return new SessionClaims("tester", role, "CRUDE", null, Instant.now().plusSeconds(900));
     }
 
-    private static Cookie find(Set<Cookie> cookies, String name, String domain) {
+    private static Cookie find(List<Cookie> cookies, String name, String domain) {
         Optional<Cookie> match = cookies.stream()
                 .filter(cookie -> cookie.getName().equals(name))
                 .filter(cookie -> java.util.Objects.equals(cookie.getDomain(), domain))
@@ -42,7 +41,7 @@ class SessionCookieWriterTest {
 
     @Test
     void testSessionCookieIsHttpOnlyAndScopedToPlatformDomain() {
-        Set<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", "refresh", claims(Roles.USER));
+        List<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", "refresh", claims(Roles.USER));
 
         Cookie session = find(cookies, SessionCookieWriter.SESSION_COOKIE, "trevorism.com");
         assertNotNull(session);
@@ -56,7 +55,7 @@ class SessionCookieWriterTest {
 
     @Test
     void testRefreshCookieUsesLongerLifetime() {
-        Set<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", "refresh", claims(Roles.USER));
+        List<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", "refresh", claims(Roles.USER));
 
         Cookie refresh = find(cookies, SessionCookieWriter.REFRESH_COOKIE, "trevorism.com");
         assertNotNull(refresh);
@@ -66,7 +65,7 @@ class SessionCookieWriterTest {
 
     @Test
     void testCompatibilityCookiesAreReadableByScripts() {
-        Set<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", "refresh", claims(Roles.TENANT_ADMIN));
+        List<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", "refresh", claims(Roles.TENANT_ADMIN));
 
         Cookie userName = find(cookies, SessionCookieWriter.USER_NAME_COOKIE, "trevorism.com");
         Cookie admin = find(cookies, SessionCookieWriter.ADMIN_COOKIE, "trevorism.com");
@@ -80,14 +79,14 @@ class SessionCookieWriterTest {
 
     @Test
     void testAdminCookieIsFalseForOrdinaryUser() {
-        Set<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", "refresh", claims(Roles.USER));
+        List<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", "refresh", claims(Roles.USER));
 
         assertEquals("false", find(cookies, SessionCookieWriter.ADMIN_COOKIE, "trevorism.com").getValue());
     }
 
     @Test
     void testNonPlatformHostGetsHostOnlyCookies() {
-        Set<Cookie> cookies = writer().sessionCookies(APPSPOT, "access", "refresh", claims(Roles.USER));
+        List<Cookie> cookies = writer().sessionCookies(APPSPOT, "access", "refresh", claims(Roles.USER));
 
         Cookie session = find(cookies, SessionCookieWriter.SESSION_COOKIE, null);
         assertNotNull(session);
@@ -97,7 +96,7 @@ class SessionCookieWriterTest {
 
     @Test
     void testLocalhostOverHttpDropsSecureFlag() {
-        Set<Cookie> cookies = writer().sessionCookies(LOCAL, "access", "refresh", claims(Roles.USER));
+        List<Cookie> cookies = writer().sessionCookies(LOCAL, "access", "refresh", claims(Roles.USER));
 
         Cookie session = find(cookies, SessionCookieWriter.SESSION_COOKIE, null);
         assertNotNull(session);
@@ -107,7 +106,7 @@ class SessionCookieWriterTest {
 
     @Test
     void testRefreshCookieIsOmittedWhenAbsent() {
-        Set<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", null, claims(Roles.USER));
+        List<Cookie> cookies = writer().sessionCookies(PLATFORM, "access", null, claims(Roles.USER));
 
         assertNull(find(cookies, SessionCookieWriter.REFRESH_COOKIE, "trevorism.com"));
         assertNotNull(find(cookies, SessionCookieWriter.SESSION_COOKIE, "trevorism.com"));
@@ -115,9 +114,9 @@ class SessionCookieWriterTest {
 
     @Test
     void testClearedCookiesCoverPlatformDomainAndHostOnly() {
-        Set<Cookie> cookies = writer().clearedCookies(PLATFORM);
+        List<Cookie> cookies = writer().clearedCookies(PLATFORM);
 
-        assertEquals(8, cookies.size());
+        assertEquals(9, cookies.size());
         for (String name : List.of(SessionCookieWriter.SESSION_COOKIE, SessionCookieWriter.REFRESH_COOKIE,
                 SessionCookieWriter.USER_NAME_COOKIE, SessionCookieWriter.ADMIN_COOKIE)) {
             assertNotNull(find(cookies, name, "trevorism.com"), name + " on platform domain");
@@ -128,10 +127,18 @@ class SessionCookieWriterTest {
 
     @Test
     void testClearedCookiesOnNonPlatformHostAreHostOnly() {
-        Set<Cookie> cookies = writer().clearedCookies(APPSPOT);
+        List<Cookie> cookies = writer().clearedCookies(APPSPOT);
 
-        assertEquals(4, cookies.size());
+        assertEquals(5, cookies.size());
         cookies.forEach(cookie -> assertNull(cookie.getDomain()));
+    }
+
+    @Test
+    void testStateCookieIsAlwaysHostOnly() {
+        assertNull(writer().stateCookie(PLATFORM, "abc:/report").getDomain());
+        assertNull(writer().stateCookie(APPSPOT, "abc:/report").getDomain());
+        assertNull(writer().stateCookie(LOCAL, "abc:/report").getDomain());
+        assertNull(writer().clearedStateCookie(PLATFORM).getDomain());
     }
 
     @Test
@@ -142,6 +149,14 @@ class SessionCookieWriterTest {
         assertTrue(state.isHttpOnly());
         assertEquals(SessionCookieWriter.STATE_MAX_AGE_SECONDS, state.getMaxAge());
         assertEquals("abc:/report", state.getValue());
+    }
+
+    @Test
+    void testAccessTokenCookiesLeaveCompatibilityCookiesAlone() {
+        List<Cookie> cookies = writer().accessTokenCookies(PLATFORM, "access");
+
+        assertEquals(1, cookies.size());
+        assertEquals(SessionCookieWriter.SESSION_COOKIE, cookies.get(0).getName());
     }
 
     @Test

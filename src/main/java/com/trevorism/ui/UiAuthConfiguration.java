@@ -11,7 +11,6 @@ public class UiAuthConfiguration {
     private String authUrl = "https://auth.trevorism.com";
     private List<String> platformDomains = List.of("trevorism.com");
     private String tenantGuid;
-    private String callbackPath = "/api/auth/callback";
 
     public String getLoginUrl() {
         return loginUrl;
@@ -43,14 +42,6 @@ public class UiAuthConfiguration {
 
     public void setTenantGuid(String tenantGuid) {
         this.tenantGuid = tenantGuid;
-    }
-
-    public String getCallbackPath() {
-        return callbackPath;
-    }
-
-    public void setCallbackPath(String callbackPath) {
-        this.callbackPath = callbackPath;
     }
 
     private static String stripTrailingSlash(String url) {

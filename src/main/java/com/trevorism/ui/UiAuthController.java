@@ -5,7 +5,6 @@ import io.micronaut.http.HttpHeaders;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
-import io.micronaut.http.MediaType;
 import io.micronaut.http.MutableHttpResponse;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.CookieValue;
@@ -17,24 +16,27 @@ import jakarta.inject.Inject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.regex.Pattern;
 
-@Controller("/api/auth")
+@Controller(UiAuthController.BASE_PATH)
 public class UiAuthController {
+
+    public static final String BASE_PATH = "/api/auth";
+    public static final String CALLBACK_PATH = BASE_PATH + "/callback";
 
     private static final Logger log = LoggerFactory.getLogger(UiAuthController.class);
     private static final String DEFAULT_NEXT = "/";
     private static final String PROTOCOL_RELATIVE_PREFIX = "//";
     private static final String BACKSLASH_PREFIX = "/\\";
+    private static final Pattern SAFE_NEXT = Pattern.compile("/[A-Za-z0-9\\-._~/?#\\[\\]@!$&'()*+=:%]*");
     private static final int STATE_BYTES = 32;
 
     private final UiAuthConfiguration configuration;
@@ -73,25 +75,24 @@ public class UiAuthController {
                                     HttpRequest<?> request) {
         PublicOrigin origin = originResolver.resolve(request);
         if (isBlank(code) || isBlank(state) || isBlank(stateCookie)) {
-            return badCallback(origin, "Missing handoff code or state");
+            return abandonCallback(origin, "missing handoff code or state");
         }
         String[] parts = stateCookie.split(":", 2);
         if (!constantTimeEquals(parts[0], state)) {
-            return badCallback(origin, "State mismatch");
+            return abandonCallback(origin, "state did not match the state cookie");
         }
         HandoffTokens tokens = authProviderClient.redeemCode(code, redirectUri(origin));
         if (tokens == null) {
-            return badCallback(origin, "Unable to redeem handoff code");
+            return abandonCallback(origin, "auth-provider refused the handoff code");
         }
         SessionClaims claims = claimsReader.read(tokens.getAccessToken());
         if (claims == null) {
-            return badCallback(origin, "Handoff returned an unreadable session");
+            return abandonCallback(origin, "the handed off access token could not be read");
         }
-        Set<Cookie> cookies = new LinkedHashSet<>(
-                cookieWriter.sessionCookies(origin, tokens.getAccessToken(), tokens.getRefreshToken(), claims));
-        cookies.add(cookieWriter.clearedStateCookie(origin));
         String next = parts.length > 1 ? safeNext(parts[1]) : DEFAULT_NEXT;
-        return found(URI.create(next)).cookies(cookies);
+        MutableHttpResponse<Object> response = found(next);
+        applyCookies(response, cookieWriter.sessionCookies(origin, tokens.getAccessToken(), tokens.getRefreshToken(), claims));
+        return response.cookie(cookieWriter.clearedStateCookie(origin));
     }
 
     @Get("/session")
@@ -109,10 +110,13 @@ public class UiAuthController {
         String accessToken = authProviderClient.redeemRefreshToken(refreshToken);
         SessionClaims refreshed = claimsReader.read(accessToken);
         if (refreshed == null) {
-            return HttpResponse.ok(unauthenticatedBody()).cookies(cookieWriter.clearedCookies(origin));
+            MutableHttpResponse<Object> cleared = HttpResponse.ok(unauthenticatedBody());
+            applyCookies(cleared, cookieWriter.clearedCookies(origin));
+            return cleared;
         }
-        return HttpResponse.ok(authenticatedBody(refreshed))
-                .cookies(cookieWriter.sessionCookies(origin, accessToken, null, refreshed));
+        MutableHttpResponse<Object> response = HttpResponse.ok(authenticatedBody(refreshed));
+        applyCookies(response, cookieWriter.accessTokenCookies(origin, accessToken));
+        return response;
     }
 
     @Post("/refresh")
@@ -120,15 +124,16 @@ public class UiAuthController {
                                    HttpRequest<?> request) {
         PublicOrigin origin = originResolver.resolve(request);
         if (isBlank(refreshToken)) {
-            return HttpResponse.unauthorized().cookies(cookieWriter.clearedCookies(origin));
+            return clearedUnauthorized(origin);
         }
         String accessToken = authProviderClient.redeemRefreshToken(refreshToken);
         SessionClaims claims = claimsReader.read(accessToken);
         if (claims == null) {
-            return HttpResponse.unauthorized().cookies(cookieWriter.clearedCookies(origin));
+            return clearedUnauthorized(origin);
         }
-        return HttpResponse.ok(authenticatedBody(claims))
-                .cookies(cookieWriter.sessionCookies(origin, accessToken, null, claims));
+        MutableHttpResponse<Object> response = HttpResponse.ok(authenticatedBody(claims));
+        applyCookies(response, cookieWriter.accessTokenCookies(origin, accessToken));
+        return response;
     }
 
     @Post("/logout")
@@ -136,14 +141,31 @@ public class UiAuthController {
         PublicOrigin origin = originResolver.resolve(request);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("logoutUrl", configuration.getLoginUrl() + "/api/logout?redirect_uri=" + encode(origin.origin()));
-        return HttpResponse.ok(body).cookies(cookieWriter.clearedCookies(origin));
+        MutableHttpResponse<Object> response = HttpResponse.ok(body);
+        applyCookies(response, cookieWriter.clearedCookies(origin));
+        return response;
     }
 
-    private static MutableHttpResponse<Object> found(URI location) {
-        return HttpResponse.status(HttpStatus.FOUND).header(HttpHeaders.LOCATION, location.toString());
+    private HttpResponse<?> clearedUnauthorized(PublicOrigin origin) {
+        MutableHttpResponse<Object> response = HttpResponse.unauthorized();
+        applyCookies(response, cookieWriter.clearedCookies(origin));
+        return response;
     }
 
-    private URI authorizeUri(PublicOrigin origin, String state) {
+    private HttpResponse<?> abandonCallback(PublicOrigin origin, String reason) {
+        log.warn("Abandoning auth callback, {}", reason);
+        return found(DEFAULT_NEXT).cookie(cookieWriter.clearedStateCookie(origin));
+    }
+
+    private static void applyCookies(MutableHttpResponse<Object> response, List<Cookie> cookies) {
+        cookies.forEach(response::cookie);
+    }
+
+    private static MutableHttpResponse<Object> found(String location) {
+        return HttpResponse.status(HttpStatus.FOUND).header(HttpHeaders.LOCATION, location);
+    }
+
+    private String authorizeUri(PublicOrigin origin, String state) {
         StringBuilder builder = new StringBuilder(configuration.getLoginUrl())
                 .append("/authorize?redirect_uri=").append(encode(redirectUri(origin)))
                 .append("&state=").append(encode(state));
@@ -151,20 +173,11 @@ public class UiAuthController {
         if (tenantGuid != null && !tenantGuid.isBlank()) {
             builder.append("&tenant=").append(encode(tenantGuid));
         }
-        return URI.create(builder.toString());
+        return builder.toString();
     }
 
-    private String redirectUri(PublicOrigin origin) {
-        return origin.origin() + configuration.getCallbackPath();
-    }
-
-    private HttpResponse<?> badCallback(PublicOrigin origin, String reason) {
-        log.warn("Rejected auth callback: {}", reason);
-        Set<Cookie> cookies = new LinkedHashSet<>(cookieWriter.clearedCookies(origin));
-        cookies.add(cookieWriter.clearedStateCookie(origin));
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("message", reason);
-        return HttpResponse.badRequest(body).contentType(MediaType.APPLICATION_JSON).cookies(cookies);
+    private static String redirectUri(PublicOrigin origin) {
+        return origin.origin() + CALLBACK_PATH;
     }
 
     private static Map<String, Object> authenticatedBody(SessionClaims claims) {
@@ -186,10 +199,13 @@ public class UiAuthController {
     }
 
     static String safeNext(String next) {
-        if (next == null || next.isBlank() || !next.startsWith("/")) {
+        if (next == null || next.isBlank() || !next.startsWith(DEFAULT_NEXT)) {
             return DEFAULT_NEXT;
         }
         if (next.startsWith(PROTOCOL_RELATIVE_PREFIX) || next.startsWith(BACKSLASH_PREFIX)) {
+            return DEFAULT_NEXT;
+        }
+        if (!SAFE_NEXT.matcher(next).matches()) {
             return DEFAULT_NEXT;
         }
         return next;
