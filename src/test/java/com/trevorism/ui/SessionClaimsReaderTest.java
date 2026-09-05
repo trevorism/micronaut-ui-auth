@@ -61,4 +61,42 @@ class SessionClaimsReaderTest {
 
         assertNull(broken.read(TestTokens.token("tester", Roles.USER, 900)));
     }
+
+    @Test
+    void testUnreadableSigningKeyPropertyIsRejectedWithoutThrowing() {
+        SessionClaimsReader broken = new SessionClaimsReader(property -> {
+            throw new IllegalStateException("secrets.properties is not on the classpath");
+        });
+
+        assertNull(broken.read(TestTokens.token("tester", Roles.USER, 900)));
+    }
+
+    @Test
+    void testUnusableSigningKeyValueIsRejectedWithoutThrowing() {
+        SessionClaimsReader broken = new SessionClaimsReader(property -> "tooshort");
+
+        assertNull(broken.read(TestTokens.token("tester", Roles.USER, 900)));
+    }
+
+    @Test
+    void testTokenFromAnotherIssuerIsRejected() {
+        String token = TestTokens.tokenWithIssuer("tester", Roles.USER, "RE", null, 900,
+                TestTokens.SIGNING_KEY, "https://evil.example.org");
+
+        assertNull(reader.read(token));
+    }
+
+    @Test
+    void testProductionShapedTokenIsReadable() {
+        SessionClaimsReader hs512Reader = new SessionClaimsReader(property -> TestTokens.HS512_SIGNING_KEY);
+
+        SessionClaims claims = hs512Reader.read(TestTokens.productionShapedToken("agent", Roles.USER));
+
+        assertNotNull(claims);
+        assertEquals("agent", claims.username());
+        assertEquals(Roles.USER, claims.role());
+        assertEquals("CRE", claims.permissions());
+        assertNull(claims.tenant());
+        assertNotNull(claims.expiresAt());
+    }
 }

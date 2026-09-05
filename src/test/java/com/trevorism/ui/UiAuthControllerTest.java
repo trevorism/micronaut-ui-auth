@@ -16,6 +16,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class UiAuthControllerTest {
@@ -50,6 +51,14 @@ class UiAuthControllerTest {
 
     private static String location(HttpResponse<?> response) {
         return response.getHeaders().get("Location");
+    }
+
+    private static void assertAbandoned(HttpResponse<?> response) {
+        assertEquals(HttpStatus.FOUND, response.status());
+        assertEquals("/", location(response));
+        Cookie state = cookie(response, SessionCookieWriter.STATE_COOKIE);
+        assertNotNull(state);
+        assertEquals(0L, state.getMaxAge());
     }
 
     private static Cookie cookie(HttpResponse<?> response, String name) {
@@ -105,6 +114,21 @@ class UiAuthControllerTest {
     }
 
     @Test
+    void testNextWithCharactersIllegalInACookieOrUriFallsBackToRoot() {
+        assertEquals("/", UiAuthController.safeNext("/a{b}"));
+        assertEquals("/", UiAuthController.safeNext("/a|b"));
+        assertEquals("/", UiAuthController.safeNext("/my report"));
+        assertEquals("/", UiAuthController.safeNext("/a,b"));
+        assertEquals("/", UiAuthController.safeNext("/a;b"));
+        assertEquals("/", UiAuthController.safeNext("/a\"b"));
+        assertEquals("/", UiAuthController.safeNext("/rapport/é"));
+        assertEquals("/", UiAuthController.safeNext("/a\rb"));
+        assertEquals("/", UiAuthController.safeNext("/a\nb"));
+        assertEquals("/report/2024%20q1?tab=1&sort=desc#top",
+                UiAuthController.safeNext("/report/2024%20q1?tab=1&sort=desc#top"));
+    }
+
+    @Test
     void testLoginRejectsOpenRedirectInStateCookie() {
         HttpResponse<?> response = controller("{}").login("//evil.example.org", request("/api/auth/login"));
 
@@ -133,37 +157,57 @@ class UiAuthControllerTest {
 
         HttpResponse<?> response = controller.callback("1000.secret", "abc", "different:/report", request("/api/auth/callback"));
 
-        assertEquals(HttpStatus.BAD_REQUEST, response.status());
+        assertAbandoned(response);
     }
 
     @Test
     void testCallbackRejectsMissingStateCookie() {
-        HttpResponse<?> response = controller("{}").callback("1000.secret", "abc", null, request("/api/auth/callback"));
-
-        assertEquals(HttpStatus.BAD_REQUEST, response.status());
+        assertAbandoned(controller("{}").callback("1000.secret", "abc", null, request("/api/auth/callback")));
     }
 
     @Test
     void testCallbackRejectsMissingCode() {
-        HttpResponse<?> response = controller("{}").callback(null, "abc", "abc:/report", request("/api/auth/callback"));
-
-        assertEquals(HttpStatus.BAD_REQUEST, response.status());
+        assertAbandoned(controller("{}").callback(null, "abc", "abc:/report", request("/api/auth/callback")));
     }
 
     @Test
     void testCallbackRejectsFailedRedeem() {
-        HttpResponse<?> response = controller(StubHttpClient.failing(400))
-                .callback("1000.secret", "abc", "abc:/report", request("/api/auth/callback"));
-
-        assertEquals(HttpStatus.BAD_REQUEST, response.status());
+        assertAbandoned(controller(StubHttpClient.failing(400))
+                .callback("1000.secret", "abc", "abc:/report", request("/api/auth/callback")));
     }
 
     @Test
     void testCallbackRejectsUnreadableAccessToken() {
-        HttpResponse<?> response = controller("{\"accessToken\":\"not.a.jwt\"}")
-                .callback("1000.secret", "abc", "abc:/report", request("/api/auth/callback"));
+        assertAbandoned(controller("{\"accessToken\":\"not.a.jwt\"}")
+                .callback("1000.secret", "abc", "abc:/report", request("/api/auth/callback")));
+    }
 
-        assertEquals(HttpStatus.BAD_REQUEST, response.status());
+    @Test
+    void testBareCallbackDoesNotSignTheUserOut() {
+        HttpResponse<?> response = controller("{}").callback(null, null, null, request("/api/auth/callback"));
+
+        assertAbandoned(response);
+        assertNull(cookie(response, SessionCookieWriter.SESSION_COOKIE));
+        assertNull(cookie(response, SessionCookieWriter.REFRESH_COOKIE));
+        assertNull(cookie(response, SessionCookieWriter.USER_NAME_COOKIE));
+        assertNull(cookie(response, SessionCookieWriter.ADMIN_COOKIE));
+    }
+
+    @Test
+    void testReplayedCallbackDoesNotSignTheUserOut() {
+        HttpResponse<?> response = controller(StubHttpClient.failing(400))
+                .callback("1000.spent", "abc", "abc:/report", request("/api/auth/callback"));
+
+        assertAbandoned(response);
+        assertNull(cookie(response, SessionCookieWriter.SESSION_COOKIE));
+        assertNull(cookie(response, SessionCookieWriter.REFRESH_COOKIE));
+    }
+
+    @Test
+    void testStateCookieIsNeverScopedToThePlatformDomain() {
+        HttpResponse<?> response = controller("{}").login("/report", request("/api/auth/login"));
+
+        assertNull(cookie(response, SessionCookieWriter.STATE_COOKIE).getDomain());
     }
 
     @Test
@@ -227,6 +271,17 @@ class UiAuthControllerTest {
 
         assertEquals(HttpStatus.OK, response.status());
         assertEquals(fresh, cookie(response, SessionCookieWriter.SESSION_COOKIE).getValue());
+    }
+
+    @Test
+    void testRefreshDoesNotExtendCompatibilityCookies() {
+        String fresh = TestTokens.token("tester", Roles.USER, 900);
+
+        HttpResponse<?> response = controller(fresh).refresh("refresh.jwt", request("/api/auth/refresh"));
+
+        assertNull(cookie(response, SessionCookieWriter.USER_NAME_COOKIE));
+        assertNull(cookie(response, SessionCookieWriter.ADMIN_COOKIE));
+        assertNull(cookie(response, SessionCookieWriter.REFRESH_COOKIE));
     }
 
     @Test

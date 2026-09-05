@@ -43,9 +43,9 @@ dependencies {
     implementation 'com.trevorism:http-utils:2.3.0'
     implementation 'com.google.code.gson:gson:2.14.0'
     implementation 'io.jsonwebtoken:jjwt-api:0.13.0'
-    implementation 'io.micronaut:micronaut-http:5.1.10'
-    implementation 'io.micronaut:micronaut-inject:5.1.10'
-    implementation 'jakarta.inject:jakarta.inject-api:2.0.1'
+    api 'io.micronaut:micronaut-http:5.1.10'
+    api 'jakarta.inject:jakarta.inject-api:2.0.1'
+    api 'io.micronaut:micronaut-inject:5.1.10'
     implementation 'org.slf4j:slf4j-api:2.0.18'
 
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.13.0'
@@ -57,6 +57,7 @@ dependencies {
     testAnnotationProcessor 'io.micronaut.security:micronaut-security-annotations:5.3.1'
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
+    testImplementation 'io.micronaut:micronaut-router:5.1.10'
     testImplementation 'org.junit.platform:junit-platform-launcher'
     testImplementation 'org.junit.jupiter:junit-jupiter-api'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
@@ -67,6 +68,10 @@ dependencies {
 
 test {
     useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
 }
 
 check.dependsOn "jacocoTestReport"

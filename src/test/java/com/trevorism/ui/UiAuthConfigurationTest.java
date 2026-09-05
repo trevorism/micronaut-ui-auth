@@ -17,7 +17,6 @@ class UiAuthConfigurationTest {
         assertEquals("https://login.auth.trevorism.com", configuration.getLoginUrl());
         assertEquals("https://auth.trevorism.com", configuration.getAuthUrl());
         assertEquals(List.of("trevorism.com"), configuration.getPlatformDomains());
-        assertEquals("/api/auth/callback", configuration.getCallbackPath());
         assertNull(configuration.getTenantGuid());
     }
 
@@ -54,10 +53,8 @@ class UiAuthConfigurationTest {
         UiAuthConfiguration configuration = new UiAuthConfiguration();
         configuration.setPlatformDomains(List.of("memowand.com"));
         configuration.setTenantGuid("guid-1");
-        configuration.setCallbackPath("/api/auth/cb");
 
         assertEquals(List.of("memowand.com"), configuration.getPlatformDomains());
         assertEquals("guid-1", configuration.getTenantGuid());
-        assertEquals("/api/auth/cb", configuration.getCallbackPath());
     }
 }
