@@ -5,6 +5,7 @@ import io.micronaut.http.HttpHeaders;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
+import io.micronaut.http.MediaType;
 import io.micronaut.http.MutableHttpResponse;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.CookieValue;
@@ -123,7 +124,7 @@ public class UiAuthController {
         return response;
     }
 
-    @Post("/refresh")
+    @Post(value = "/refresh", consumes = MediaType.ALL)
     public HttpResponse<?> refresh(@Nullable @CookieValue(SessionCookieWriter.REFRESH_COOKIE) String refreshToken,
                                    HttpRequest<?> request) {
         PublicOrigin origin = originResolver.resolve(request);
@@ -143,7 +144,7 @@ public class UiAuthController {
         return response;
     }
 
-    @Post("/logout")
+    @Post(value = "/logout", consumes = MediaType.ALL)
     public HttpResponse<?> logout(HttpRequest<?> request) {
         PublicOrigin origin = originResolver.resolve(request);
         Map<String, Object> body = new LinkedHashMap<>();

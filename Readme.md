@@ -21,40 +21,8 @@ Add the dependency. Every bean and route below is discovered automatically. The 
 at `/api/auth/callback` and is not configurable, because auth-provider only allowlists that path.
 
 ```gradle
-implementation 'com.trevorism:micronaut-ui-auth:1.0.0'
+implementation 'com.trevorism:micronaut-ui-auth:1.1.0'
 ```
-
-The signing key comes from `signingKey` in the app's classpath `secrets.properties`, the same file
-`micronaut-security-utils` already reads.
-
-## Routes
-
-| Route | Behaviour |
-|---|---|
-| `GET /api/auth/login?next=` | Writes a state cookie and redirects to the login app's `/authorize` |
-| `GET /api/auth/callback?code&state` | Verifies state, redeems the code, sets cookies, redirects to `next` |
-| | On any failure it redirects to `/` and clears only the state cookie, never the session |
-| `GET /api/auth/session` | Reports the current session, refreshing it in place when the access token has expired |
-| `POST /api/auth/refresh` | Redeems the refresh token for a new access token |
-| `POST /api/auth/logout` | Clears the cookies and returns the login app's logout URL |
-
-No route carries `@Secure`. Each one authenticates by cookie explicitly.
-
-## Cookies
-
-| Cookie | Value | HttpOnly | Max-Age |
-|---|---|---|---|
-| `session` | access token | yes | 900 |
-| `refresh_token` | refresh token | yes | 86400 |
-| `user_name` | token subject | no | 86400 |
-| `admin` | `true` for `admin` or `tenant_admin` | no | 86400 |
-| `ui_auth_state` | login nonce and return path | yes | 600 |
-
-The first four are `Path=/`. The state cookie is `Path=/api/auth` and is always host-only, so one app
-cannot overwrite another app's login nonce. All are `SameSite=Lax`, and `Secure` unless the request
-resolves to `http` on a loopback host. A host under a configured platform domain gets `Domain=<platform domain>` so subdomain single
-sign-on keeps working; every other host gets host-only cookies. `user_name` and `admin` exist only
-for compatibility with header bar 5.x.
 
 ## Configuration
 
