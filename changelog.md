@@ -1,4 +1,4 @@
-## 1.0.2
+## 1.1.0
 
 Let logout and refresh accept any content type. Both take no request body, but
 Micronaut defaults a POST to consuming JSON, and a browser posts a bodyless
