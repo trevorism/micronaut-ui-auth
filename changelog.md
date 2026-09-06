@@ -1,3 +1,9 @@
+## 1.0.2
+
+Let logout and refresh accept any content type. Both take no request body, but
+Micronaut defaults a POST to consuming JSON, and a browser posts a bodyless
+request as form-urlencoded, so both answered 415 and logout silently did nothing.
+
 ## 1.0.1
 
 Stop a username containing a space or a comma from breaking the callback, keep
